@@ -298,7 +298,15 @@ class TELinear(te.pytorch.Linear):
             **extra_kwargs,
         )
 
-        self.forward_hadamard_matrix = hadamard_transform(torch.eye(32, device=torch.cuda.current_device(), dtype=config.params_dtype), scale=32**-0.5)
+        if config.w_quant == "none":
+            self.forward_hadamard_matrix = None
+        elif config.w_quant == "quest_mxfp4":
+            self.forward_hadamard_matrix = hadamard_transform(torch.eye(32, device=torch.cuda.current_device(), dtype=config.params_dtype), scale=32**-0.5)
+        elif config.w_quant == "quest_binary":
+            self.forward_hadamard_matrix = hadamard_transform(torch.eye(128, device=torch.cuda.current_device(), dtype=config.params_dtype), scale=128**-0.5)
+        else:
+            raise ValueError(f"Invalid weight quantization function: {config.w_quant}")
+
         self.w_quant_fn = QUANTIZE_AUTOGRAD_FNS[config.w_quant]
         self.a_quant_fn = QUANTIZE_AUTOGRAD_FNS[config.a_quant]
 

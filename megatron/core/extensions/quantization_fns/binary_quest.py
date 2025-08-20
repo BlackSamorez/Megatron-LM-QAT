@@ -44,7 +44,12 @@ def binary_forward_kernel(
 
     mean_squared = tl.sum(x_had_grouped * x_had_grouped, axis=-1, keep_dims=True) / hadamard_dim
     mean = tl.sum(x_had_grouped, axis=-1, keep_dims=True) / hadamard_dim
-    std = tl.sqrt(mean_squared - mean * mean)
+    var = mean_squared - mean * mean
+    std = tl.where(
+        var > 0,
+        tl.sqrt(var),
+        0, 
+    )
     scales = gaussian_scale * std + 1e-8
 
     
