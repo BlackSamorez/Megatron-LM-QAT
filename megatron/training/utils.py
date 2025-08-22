@@ -32,6 +32,7 @@ from megatron.training import (
     get_args,
     get_adlr_autoresume,
 )
+from megatron.training.logits_fetcher import LogitsLoader
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core import mpu
 from megatron.core.datasets.utils import get_blend_from_list
@@ -505,6 +506,71 @@ def get_batch_on_this_tp_rank(data_iterator):
            'position_ids': position_ids
        }
 
+    return batch
+
+        
+LOGITS_LOADER = None
+
+
+def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
+    global LOGITS_LOADER
+    if LOGITS_LOADER is None:
+        LOGITS_LOADER = LogitsLoader()
+        
+    args = get_args()
+
+    def _broadcast(item):
+       if item is not None:
+           torch.distributed.broadcast(item, mpu.get_tensor_model_parallel_src_rank(), group=mpu.get_tensor_model_parallel_group())
+           
+    if mpu.get_tensor_model_parallel_rank() == 0:
+        data_parallel_rank = mpu.get_data_parallel_rank()
+        data_parallel_world_size = mpu.get_data_parallel_world_size()
+        assert 128 % data_parallel_world_size == 0, "128 must be divisible by data parallel world size"
+
+        batch = LOGITS_LOADER.get_seq(current_seq_counter, seqs_to_consume_per_dp, data_parallel_rank, data_parallel_world_size)
+        
+        if args.pipeline_model_parallel_size == 1:
+            _broadcast(batch['input_ids'])
+            _broadcast(batch['exp_logits'])
+            _broadcast(batch['index'])
+            _broadcast(batch['loss_mask'])
+            _broadcast(batch['attention_mask'])
+            _broadcast(batch['position_ids'])
+        else:
+            raise ValueError("Pipeline model parallel size must be 1")
+    else:
+        input_ids = torch.empty((args.micro_batch_size, args.seq_length), dtype=torch.int64, device=torch.cuda.current_device())
+        exp_logits = torch.empty((args.micro_batch_size, args.seq_length, args.padded_vocab_size), dtype=torch.float32, device=torch.cuda.current_device())
+        index = torch.empty((args.micro_batch_size, args.seq_length, TOPK), dtype=torch.int64, device=torch.cuda.current_device())
+        loss_mask = torch.empty((args.micro_batch_size, args.seq_length), dtype=torch.float32, device=torch.cuda.current_device())
+        if args.create_attention_mask_in_dataloader:
+           attention_mask=torch.empty(
+                (args.micro_batch_size,1,args.seq_length,args.seq_length), dtype = torch.bool , device = torch.cuda.current_device()
+            )
+        else:
+            attention_mask=None
+        position_ids = torch.arange(args.seq_length, dtype=torch.long, device=torch.cuda.current_device())
+        
+        if args.pipeline_model_parallel_size == 1:
+            _broadcast(input_ids)
+            _broadcast(exp_logits)
+            _broadcast(index)
+            _broadcast(loss_mask)
+            _broadcast(attention_mask)
+            _broadcast(position_ids)
+        else:
+            raise ValueError("Pipeline model parallel size must be 1")
+            
+        batch = {
+            'input_ids': input_ids,
+            'exp_logits': exp_logits,
+            'index': index,
+            'loss_mask': loss_mask,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids
+        }
+    
     return batch
 
 

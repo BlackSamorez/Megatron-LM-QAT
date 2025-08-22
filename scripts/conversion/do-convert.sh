@@ -8,7 +8,7 @@
 MEGATRON_LM_DIR=/iopsstor/scratch/cscs/blacksamorez/Megatron-LM-QAT/
 export PYTHONPATH=$MEGATRON_LM_DIR:$PYTHONPATH
 
-NAME=ap3-1b-qat-6n-engine
+NAME=ap1b-w1a1
 
 # CKPT_PATH=/iopsstor/scratch/cscs/schlag/experiments/merge-for-v2/Megatron-LM/logs/Meg-Runs/apertus2_baselines/apertus2-1b-21n-4096sl-504gbsz-ademamix-wsd-xielu-crossDocAttn-goldfish-beta2-qkNorm-untie/checkpoints
 CKPT_PATH=/capstor/scratch/cscs/blacksamorez/Megatron-LM-QAT/logs/Meg-Runs/$NAME/checkpoints
@@ -50,7 +50,7 @@ python $MEGATRON_LM_DIR/tools/checkpoint/convert.py \
     --load-dir $LOAD_DIR \
     --save-dir $SAVE_DIR \
     --hf-tokenizer Dhia-GB/sai-tokenizer \
-    --test-logits \
+    # --test-logits \
 
 echo 'copying HF ckpt to /capstor/store/cscs/swissai/a140/checkpoints/hf-debug-ckpts/'
 cp -r $SAVE_DIR /capstor/store/cscs/swissai/a140/checkpoints/hf-debug-ckpts/
