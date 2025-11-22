@@ -208,6 +208,7 @@ class GPTModel(LanguageModule):
         packed_seq_params: PackedSeqParams = None,
         extra_block_kwargs: dict = None,
         runtime_gather_output: Optional[bool] = None,
+        return_topk: int = -1,
     ) -> Tensor:
         """Forward function of the GPT Model This function passes the input tensors
         through the embedding layer, and then the decoeder and finally into the post
@@ -304,8 +305,12 @@ class GPTModel(LanguageModule):
             log_config_to_disk(self.config, payload, prefix='input_and_logits')
 
         if labels is None:
-            # [s b h] => [b s h]
-            return logits.transpose(0, 1).contiguous()
+            if return_topk != -1:
+                probs = torch.nn.functional.softmax(logits, dim=-1)
+                topk = torch.topk(probs, k=return_topk, dim=-1)
+                return topk.values, topk.indices
+
+            return logits
 
         loss = self.compute_language_model_loss(labels, logits)
 
