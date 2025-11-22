@@ -18,6 +18,7 @@ from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegat
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 from megatron.core.datasets.gpt_dataset import MockGPTDataset, GPTDataset
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.packed_seq_params import PackedSeqParams
 import megatron.legacy.model
 from megatron.core.models.gpt import GPTModel
 from megatron.training import pretrain
@@ -219,6 +220,44 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     )
 
 
+def mask_to_packed_seq_params(mask: torch.Tensor) -> PackedSeqParams:
+    if mask.dim() == 4: mask = mask.squeeze(1)
+    b, s, _ = mask.shape
+    flat_n = b * s
+    device = mask.device
+
+    sub_diag = torch.diagonal(mask, -1, 1, 2)
+    
+    is_start = torch.cat([
+        torch.ones(b, 1, device=device, dtype=torch.bool), 
+        sub_diag
+    ], dim=1).reshape(-1)
+    
+    starts = torch.nonzero(is_start).squeeze(-1)
+    
+    ends = torch.cat([starts[1:], torch.tensor([flat_n], device=device)])
+    lens = ends - starts
+
+    diag_flat = torch.diagonal(mask, 0, 1, 2).reshape(-1)
+    not_padding = ~diag_flat[starts]
+
+    val_lens = lens[not_padding]
+    val_starts = starts[not_padding]
+
+    cu_seq = torch.nn.functional.pad(val_lens.cumsum(0), (1, 0)).int()
+    
+    # Physical indices (skipping ignored tokens in the buffer)
+    cu_pad = torch.cat([val_starts, torch.tensor([flat_n], device=device)]).int()
+    
+    max_len = int(val_lens.max()) if val_lens.numel() > 0 else 0
+
+    return PackedSeqParams(
+        cu_seqlens_q=cu_seq, cu_seqlens_kv=cu_seq,
+        max_seqlen_q=max_len, max_seqlen_kv=max_len,
+        qkv_format='thd'
+    )
+
+
 def forward_step(data_iterator, model: GPTModel):
     """Forward training step.
 
@@ -235,11 +274,16 @@ def forward_step(data_iterator, model: GPTModel):
     with stimer(bdata=True):
         tokens, labels, loss_mask, attention_mask, position_ids = get_batch(
             data_iterator)
+        position_ids = position_ids.view(1, -1)
+        tokens = tokens.view(1, -1)
+        labels = labels.view(1, -1)
+        loss_mask = loss_mask.view(1, -1)
+        packed_seq_params = mask_to_packed_seq_params(attention_mask)
     timers('batch-generator').stop()
 
     with stimer:
         output_tensor = model(tokens, position_ids, attention_mask,
-                              labels=labels)
+                              labels=labels, packed_seq_params=packed_seq_params)
 
     return output_tensor, partial(loss_func, loss_mask)
 
