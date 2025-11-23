@@ -1,5 +1,6 @@
 import os
-import multiprocessing as mp
+import threading
+import queue
 from time import perf_counter
 import tempfile
 import shutil
@@ -73,10 +74,10 @@ def _save_file_safe(chunk_id: int, payload: dict, dst_path: str):
             os.remove(tmp_path)
         raise e
 
-def _save_worker(processed_q: mp.Queue, status_q: mp.Queue, dst_path: str):
+def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str):
     from concurrent.futures import ThreadPoolExecutor
     
-    sem = threading.BoundedSemaphore(value=SAVER_WORKERS * 2)
+    sem = threading.BoundedSemaphore(value=SAVER_WORKERS)
 
     def _run_one(msg): 
         # msg: (relative_step_idx, absolute_chunk_id, payload)
@@ -91,9 +92,9 @@ def _save_worker(processed_q: mp.Queue, status_q: mp.Queue, dst_path: str):
 
     with ThreadPoolExecutor(max_workers=SAVER_WORKERS) as pool:
         while True:
+            sem.acquire() 
             msg = processed_q.get()
             if msg is None: break
-            sem.acquire()
             pool.submit(_run_one, msg)
 
 
@@ -147,13 +148,13 @@ def sync_and_save_elastic(tracker: ProgressTracker,
     return new_global_total
 
 
-def drain_status_queue(status_q: mp.Queue, tracker: ProgressTracker):
+def drain_status_queue(status_q: queue.Queue, tracker: ProgressTracker):
     while not status_q.empty():
         try:
             step_idx, error = status_q.get_nowait()
             if error: raise error
             tracker.process_completion(step_idx)
-        except mp.queues.Empty:
+        except queue.Empty:
             break
 
 def add_logits_args(parser):
@@ -224,19 +225,16 @@ def main():
     saver_payload_q, saver_status_q, save_worker, tracker = None, None, None, None
     
     if mpu.get_tensor_model_parallel_rank() == 0:
-        ctx = mp.get_context("spawn")
-        saver_payload_q = ctx.Queue(maxsize=8) 
-        saver_status_q = ctx.Queue(maxsize=16)
+        saver_payload_q = queue.Queue(maxsize=8) 
+        saver_status_q = queue.Queue(maxsize=32)
         
-        save_worker = ctx.Process(
+        save_worker = threading.Thread(
             target=_save_worker, 
             args=(saver_payload_q, saver_status_q, args.logits_save_dir), 
             daemon=True
         )
         save_worker.start()
         
-        # IMPORTANT: Tracker resets to 0 for THIS run.
-        # We calculate global offsets using accumulated_chunks.
         tracker = ProgressTracker()
 
     dist.barrier()
