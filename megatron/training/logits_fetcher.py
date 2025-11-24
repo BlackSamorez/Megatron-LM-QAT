@@ -85,6 +85,7 @@ class LogitsLoader:
         self.exp_logits_buffer: Optional[torch.Tensor] = None
         self.index_buffer: Optional[torch.Tensor] = None
         self.loss_mask_buffer: Optional[torch.Tensor] = None
+        self.cu_seqlens: list[torch.Tensor] = None
 
         # Prefetch config
         self.prefetch_ahead: int = max(0, int(prefetch_ahead_files))
@@ -165,8 +166,6 @@ class LogitsLoader:
             'exp_logits': exp_logits.to(self._device, non_blocking=True),
             'index': index.to(self._device, non_blocking=True),
             'loss_mask': loss_mask.to(self._device, non_blocking=True),
-            'attention_mask': None,
-            'position_ids': torch.arange(input_ids.shape[1], dtype=torch.long, device=self._device),
         }
         
     def _queue_to_cache(self, file_start_seq: int, dp_rank: int, dp_world_size: int) -> None:

@@ -18,6 +18,7 @@ from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegat
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 from megatron.core.datasets.gpt_dataset import MockGPTDataset, GPTDataset
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.packed_seq_params import PackedSeqParams
 import megatron.legacy.model
 from megatron.core.models.gpt import GPTModel
 from megatron.training import pretrain
@@ -276,7 +277,6 @@ def forward_step(data_iterator, model: GPTModel):
             labels=batch['labels'],
             teacher_probs=batch['exp_logits'],
             prob_positions=batch['index'],
-            attention_mask=batch['attention_mask'],
             position_ids=batch['position_ids'],
         )
 

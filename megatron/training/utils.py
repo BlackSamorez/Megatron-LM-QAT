@@ -537,12 +537,13 @@ def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
 
         batch = LOGITS_LOADER.get_seq(current_seq_counter, seqs_to_consume_per_dp, data_parallel_rank, data_parallel_world_size)
         
-        assert batch['input_ids'].shape == (args.micro_batch_size, args.seq_length), f"input_ids shape {batch['input_ids'].shape} != {(args.micro_batch_size, args.seq_length)}"
-        assert batch['labels'].shape == (args.micro_batch_size, args.seq_length), f"labels shape {batch['labels'].shape} != {(args.micro_batch_size, args.seq_length)}"
-        assert batch['exp_logits'].shape == (args.seq_length, args.micro_batch_size, TOPK), f"exp_logits shape {batch['exp_logits'].shape} != {(args.seq_length, args.micro_batch_size, TOPK)}"
-        assert batch['index'].shape == (args.seq_length, args.micro_batch_size, TOPK), f"index shape {batch['index'].shape} != {(args.seq_length, args.micro_batch_size, TOPK)}"
-        assert batch['loss_mask'].shape == (args.micro_batch_size, args.seq_length), f"loss_mask shape {batch['loss_mask'].shape} != {(args.micro_batch_size, args.seq_length)}"
-        assert batch['position_ids'].shape == (args.seq_length,), f"position_ids shape {batch['position_ids'].shape} != {(args.seq_length,)}"
+        assert batch['input_ids'].shape == (1, args.micro_batch_size * args.seq_length), f"input_ids shape {batch['input_ids'].shape} != {(1, args.micro_batch_size * args.seq_length)}"
+        assert batch['labels'].shape == (1, args.micro_batch_size * args.seq_length), f"labels shape {batch['labels'].shape} != {(1, args.micro_batch_size * args.seq_length)}"
+        assert batch['exp_logits'].shape == (args.seq_length * args.micro_batch_size, 1, TOPK), f"exp_logits shape {batch['exp_logits'].shape} != {(args.seq_length * args.micro_batch_size, 1, TOPK)}"
+        assert batch['index'].shape == (args.seq_length * args.micro_batch_size, 1, TOPK), f"index shape {batch['index'].shape} != {(args.seq_length * args.micro_batch_size, 1, TOPK)}"
+        assert batch['loss_mask'].shape == (1, args.micro_batch_size * args.seq_length), f"loss_mask shape {batch['loss_mask'].shape} != {(1, args.micro_batch_size * args.seq_length)}"
+        batch['attention_mask'] = None
+        batch['position_ids'] = torch.arange(args.seq_length, dtype=torch.long, device=torch.cuda.current_device())
         
         if args.pipeline_model_parallel_size == 1:
             _broadcast(batch['input_ids'])
@@ -550,15 +551,14 @@ def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
             _broadcast(batch['exp_logits'])
             _broadcast(batch['index'])
             _broadcast(batch['loss_mask'])
-            _broadcast(batch['position_ids'])
         else:
             raise ValueError("Pipeline model parallel size must be 1")
     else:
-        input_ids = torch.empty((args.micro_batch_size, args.seq_length), dtype=torch.int32, device=torch.cuda.current_device())
-        labels = torch.empty((args.micro_batch_size, args.seq_length), dtype=torch.int32, device=torch.cuda.current_device())
-        exp_logits = torch.empty((args.seq_length, args.micro_batch_size, TOPK), dtype=torch.float32, device=torch.cuda.current_device())
-        index = torch.empty((args.seq_length, args.micro_batch_size, TOPK), dtype=torch.int32, device=torch.cuda.current_device())
-        loss_mask = torch.empty((args.micro_batch_size, args.seq_length), dtype=torch.bool, device=torch.cuda.current_device())
+        input_ids = torch.empty((1, args.micro_batch_size * args.seq_length), dtype=torch.int32, device=torch.cuda.current_device())
+        labels = torch.empty((1, args.micro_batch_size * args.seq_length), dtype=torch.int32, device=torch.cuda.current_device())
+        exp_logits = torch.empty((args.seq_length * args.micro_batch_size, 1, TOPK), dtype=torch.float32, device=torch.cuda.current_device())
+        index = torch.empty((args.seq_length * args.micro_batch_size, 1, TOPK), dtype=torch.int32, device=torch.cuda.current_device())
+        loss_mask = torch.empty((1, args.micro_batch_size * args.seq_length), dtype=torch.bool, device=torch.cuda.current_device())
         attention_mask=None
         position_ids = torch.arange(args.seq_length, dtype=torch.long, device=torch.cuda.current_device())
         
@@ -568,7 +568,6 @@ def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
             _broadcast(exp_logits)
             _broadcast(index)
             _broadcast(loss_mask)
-            _broadcast(position_ids)
         else:
             raise ValueError("Pipeline model parallel size must be 1")
             
@@ -579,7 +578,7 @@ def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
             'index': index,
             'loss_mask': loss_mask,
             'attention_mask': attention_mask,
-            'position_ids': position_ids
+            'position_ids': position_ids,
         }
     
     return batch
