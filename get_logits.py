@@ -11,8 +11,8 @@ import torch
 import torch.distributed as dist
 
 from megatron.core.inference.model_inference_wrappers.inference_wrapper_config import InferenceWrapperConfig
-from pretrain_gpt import model_provider, train_valid_test_datasets_provider, get_batch, mask_to_packed_seq_params
-from megatron.training import get_args, get_model, print_rank_0, get_timers
+from pretrain_gpt import model_provider, train_valid_test_datasets_provider, get_batch, tokens_to_packed_seq_params
+from megatron.training import get_args, get_model, print_rank_0, get_timers, get_tokenizer
 from megatron.training.initialize import initialize_megatron
 from megatron.training.checkpointing import load_checkpoint
 from megatron.core import mpu
@@ -181,6 +181,7 @@ def main():
     model = model[0].module
     model.eval()
     model.model_is_pipeline_parallel = False
+    tokenizer = get_tokenizer()
 
     timers = get_timers()
     wandb_writer = get_wandb_writer()
@@ -253,11 +254,12 @@ def main():
                 timers('batch-generator', log_level=1).start()
                 # Loader automatically skips 'accumulated_chunks' + 'current_run_step * world_size'
                 tokens, labels, loss_mask, attention_mask, position_ids = get_batch(train_data_iterator)
+                orig_seq_len = position_ids.size(1)
                 position_ids = position_ids.view(1, -1)
                 tokens = tokens.view(1, -1)
                 labels = labels.view(1, -1)
                 loss_mask = loss_mask.view(1, -1)
-                packed_seq_params = mask_to_packed_seq_params(attention_mask)
+                packed_seq_params = tokens_to_packed_seq_params(tokens, tokenizer.eod, orig_seq_len)
                 timers('batch-generator').stop()
                 
                 # Forward Pass
