@@ -366,6 +366,7 @@ class _TeacherDistillLoss(Function):
         local_vocab_size = logits.shape[-1]
 
         logits = logits.float()
+        teacher_probs = teacher_probs.float()
         local_max = logits.max(dim=-1).values
         global_max = local_max.clone()
         torch.distributed.all_reduce(global_max, op=torch.distributed.ReduceOp.MAX, group=tp_group)

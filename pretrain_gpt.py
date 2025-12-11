@@ -199,6 +199,8 @@ def loss_func(loss_mask: torch.Tensor, lm_loss: torch.Tensor, distill_loss: torc
     """
     args = get_args()
     
+    loss_mask = (loss_mask != 0.0)
+    
     lm_loss = torch.where(
         loss_mask,
         lm_loss,
@@ -284,17 +286,18 @@ def forward_step(data_iterator, model: GPTModel):
     global stimer
     with stimer(bdata=True):
         batch = get_batch(data_iterator)
-        batch['packed_seq_params'] = tokens_to_packed_seq_params(batch['input_ids'], tokenizer.eos, args.seq_length)
+        batch['packed_seq_params'] = tokens_to_packed_seq_params(batch['input_ids'], tokenizer.eod, args.seq_length)
     timers('batch-generator').stop()
 
     with stimer:
         distill_loss, lm_loss = model(
-            input_ids=batch['input_ids'],
+            batch['input_ids'],
+            batch['position_ids'],
+            batch['attention_mask'],
             labels=batch['labels'],
             teacher_probs=batch['exp_logits'],
             prob_positions=batch['index'],
-            position_ids=batch['position_ids'],
-            packed_seq_params=batch['position_ids'],
+            packed_seq_params=batch['packed_seq_params'],
         )
 
     return distill_loss, partial(loss_func, batch['loss_mask'], lm_loss)

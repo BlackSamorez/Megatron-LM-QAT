@@ -111,11 +111,11 @@ class LogitsLoader:
         assert self.input_ids_buffer.numel() // SEQS_PER_FILE == self.seq_length, f"Distillation seq_length mismatch: logits seq_length={self.input_ids_buffer.numel() // SEQS_PER_FILE}, training seq_length={self.seq_length}"
         
         # Slice sequences
-        input_ids = self.input_ids_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
-        labels = self.labels_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
-        exp_logits = self.exp_logits_buffer.view(self.seq_length, SEQS_PER_FILE, TOPK)[:, diff:diff + seqs_to_consume_per_dp, :].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
-        index = self.index_buffer.view(self.seq_length, SEQS_PER_FILE, TOPK)[:, diff:diff + seqs_to_consume_per_dp, :].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
-        loss_mask = self.loss_mask_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
+        input_ids = self.input_ids_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp].view(1, self.seq_length * seqs_to_consume_per_dp)
+        labels = self.labels_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp].view(1, self.seq_length * seqs_to_consume_per_dp)
+        exp_logits = self.exp_logits_buffer.view(SEQS_PER_FILE, self.seq_length, TOPK)[diff:diff + seqs_to_consume_per_dp].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
+        index = self.index_buffer.view(SEQS_PER_FILE, self.seq_length, TOPK)[diff:diff + seqs_to_consume_per_dp].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
+        loss_mask = self.loss_mask_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp].view(1, self.seq_length * seqs_to_consume_per_dp)
                 
         # for i in range(local_seq_counter, local_seq_counter + seqs_to_consume_per_dp):
         #     CONSUMED_IDS.add(i)
