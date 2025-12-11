@@ -22,7 +22,7 @@ logger = getLogger(__name__)
 
 
 # ---------------------- USER-DEFINED CONSTANTS ----------------------
-TENSORS_DIR = "/capstor/store/cscs/swissai/infra01/distillation/70B_TOP256_ws75_logits"
+TENSORS_DIR = "/capstor/store/cscs/swissai/infra01/distillation/8B_TOP256_logits"
 TOPK = 256
 SEQS_PER_FILE = 32          # 32 sequences per dp file
 FILES_PER_ITER = 128        # 128 dp files per iteration
@@ -70,7 +70,7 @@ class LogitsLoader:
     - CPU tensors are pinned upon cache admission for async H2D.
     """
 
-    def __init__(self, prefetch_ahead_files: int = 32, start_method: str = "spawn"):
+    def __init__(self, seq_length: int, prefetch_ahead_files: int = 32, start_method: str = "spawn"):
         """
         prefetch_ahead_files:
             number of FUTURE files to keep ready (not counting current).
@@ -79,13 +79,14 @@ class LogitsLoader:
         start_method:
             "spawn" (safe around CUDA; works cross-platform) or "fork" (Linux/macOS only; testing).
         """
+        self.seq_length = seq_length
+        
         # Active buffers (CPU) for the currently mounted file
         self.input_ids_buffer: Optional[torch.Tensor] = None
         self.labels_buffer: Optional[torch.Tensor] = None
         self.exp_logits_buffer: Optional[torch.Tensor] = None
         self.index_buffer: Optional[torch.Tensor] = None
         self.loss_mask_buffer: Optional[torch.Tensor] = None
-        self.cu_seqlens: list[torch.Tensor] = None
 
         # Prefetch config
         self.prefetch_ahead: int = max(0, int(prefetch_ahead_files))
@@ -105,6 +106,27 @@ class LogitsLoader:
 
         # Sticky runtime info (filled on first get_seq)
         self._device: Optional[torch.device] = None
+
+    def slice_seq(self, diff: int, seqs_to_consume_per_dp: int) -> dict:
+        assert self.input_ids_buffer.numel() // SEQS_PER_FILE == self.seq_length, f"Distillation seq_length mismatch: logits seq_length={self.input_ids_buffer.numel() // SEQS_PER_FILE}, training seq_length={self.seq_length}"
+        
+        # Slice sequences
+        input_ids = self.input_ids_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
+        labels = self.labels_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
+        exp_logits = self.exp_logits_buffer.view(self.seq_length, SEQS_PER_FILE, TOPK)[:, diff:diff + seqs_to_consume_per_dp, :].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
+        index = self.index_buffer.view(self.seq_length, SEQS_PER_FILE, TOPK)[:, diff:diff + seqs_to_consume_per_dp, :].view(self.seq_length * seqs_to_consume_per_dp, 1, TOPK)
+        loss_mask = self.loss_mask_buffer.view(SEQS_PER_FILE, self.seq_length)[diff:diff + seqs_to_consume_per_dp, :].view(1, self.seq_length * seqs_to_consume_per_dp)
+                
+        # for i in range(local_seq_counter, local_seq_counter + seqs_to_consume_per_dp):
+        #     CONSUMED_IDS.add(i)
+
+        return {
+            'input_ids': input_ids.to(self._device, non_blocking=True),   # [1, self.seq_length * seqs_to_consume_per_dp]
+            'labels': labels.to(self._device, non_blocking=True),         # [1, self.seq_length * seqs_to_consume_per_dp]
+            'exp_logits': exp_logits.to(self._device, non_blocking=True), # [self.seq_length * seqs_to_consume_per_dp, 1, TOPK]
+            'index': index.to(self._device, non_blocking=True),           # [self.seq_length * seqs_to_consume_per_dp, 1, TOPK]
+            'loss_mask': loss_mask.to(self._device, non_blocking=True),   # [1, self.seq_length * seqs_to_consume_per_dp]
+        }
 
     # -------------------- Public API --------------------
     def get_seq(
@@ -151,22 +173,7 @@ class LogitsLoader:
         # Slice within file
         diff = local_seq_counter - self._cached_seq
 
-        input_ids = self.input_ids_buffer[diff:diff + seqs_to_consume_per_dp]
-        labels = self.labels_buffer[diff:diff + seqs_to_consume_per_dp]
-        exp_logits = self.exp_logits_buffer[:, diff:diff + seqs_to_consume_per_dp]
-        index = self.index_buffer[:, diff:diff + seqs_to_consume_per_dp]
-        loss_mask = self.loss_mask_buffer[diff:diff + seqs_to_consume_per_dp]
-                
-        # for i in range(local_seq_counter, local_seq_counter + seqs_to_consume_per_dp):
-        #     CONSUMED_IDS.add(i)
-
-        return {
-            'input_ids': input_ids.to(self._device, non_blocking=True),
-            'labels': labels.to(self._device, non_blocking=True),
-            'exp_logits': exp_logits.to(self._device, non_blocking=True),
-            'index': index.to(self._device, non_blocking=True),
-            'loss_mask': loss_mask.to(self._device, non_blocking=True),
-        }
+        return self.slice_seq(diff, seqs_to_consume_per_dp)
         
     def _queue_to_cache(self, file_start_seq: int, dp_rank: int, dp_world_size: int) -> None:
         # Queue to cache

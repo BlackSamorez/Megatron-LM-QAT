@@ -254,6 +254,20 @@ def loss_func(loss_mask: torch.Tensor, lm_loss: torch.Tensor, distill_loss: torc
     )
 
 
+def tokens_to_packed_seq_params(input_ids: torch.Tensor, eod_token: int, orig_seq_len: int) -> PackedSeqParams:    
+    cu_seq, _ = torch.sort(torch.cat((
+        torch.arange(0, input_ids.size(-1) + orig_seq_len, orig_seq_len, device=input_ids.device, dtype=torch.int32),
+        (input_ids.flatten() == eod_token).nonzero()[:, 0].int() + 1,
+    )))
+    
+    max_len = (cu_seq[1:] - cu_seq[:-1]).max()
+    return PackedSeqParams(
+        cu_seqlens_q=cu_seq, cu_seqlens_kv=cu_seq,
+        max_seqlen_q=max_len, max_seqlen_kv=max_len,
+        qkv_format='thd'
+    )
+
+
 def forward_step(data_iterator, model: GPTModel):
     """Forward training step.
 
@@ -262,6 +276,7 @@ def forward_step(data_iterator, model: GPTModel):
         model (GPTModel): The GPT Model
     """
     args = get_args()
+    tokenizer = get_tokenizer()
     timers = get_timers()
 
     # Get the batch.
@@ -269,6 +284,7 @@ def forward_step(data_iterator, model: GPTModel):
     global stimer
     with stimer(bdata=True):
         batch = get_batch(data_iterator)
+        batch['packed_seq_params'] = tokens_to_packed_seq_params(batch['input_ids'], tokenizer.eos, args.seq_length)
     timers('batch-generator').stop()
 
     with stimer:
@@ -278,6 +294,7 @@ def forward_step(data_iterator, model: GPTModel):
             teacher_probs=batch['exp_logits'],
             prob_positions=batch['index'],
             position_ids=batch['position_ids'],
+            packed_seq_params=batch['position_ids'],
         )
 
     return distill_loss, partial(loss_func, batch['loss_mask'], lm_loss)

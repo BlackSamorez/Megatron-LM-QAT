@@ -36,6 +36,7 @@ from megatron.training import (
     get_adlr_autoresume,
 )
 from megatron.training.logits_fetcher import LogitsLoader, TOPK
+from megatron.training import get_tokenizer
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core import mpu
 from megatron.core.datasets.utils import get_blend_from_list
@@ -530,7 +531,8 @@ def get_top_logits_batch(current_seq_counter: int, seqs_to_consume_per_dp: int):
            
     if mpu.get_tensor_model_parallel_rank() == 0:
         if LOGITS_LOADER is None:
-            LOGITS_LOADER = LogitsLoader()
+            tokenizer = get_tokenizer()
+            LOGITS_LOADER = LogitsLoader(seq_length=args.seq_length, eod_id=tokenizer.eod)
         data_parallel_rank = mpu.get_data_parallel_rank()
         data_parallel_world_size = mpu.get_data_parallel_world_size()
         assert 128 % data_parallel_world_size == 0, "128 must be divisible by data parallel world size"
