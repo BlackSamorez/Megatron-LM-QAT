@@ -306,9 +306,15 @@ class GPTModel(LanguageModule):
 
         if labels is None:
             if return_topk != -1:
-                probs = torch.nn.functional.softmax(logits, dim=-1)
-                topk = torch.topk(probs, k=return_topk, dim=-1)
-                return topk.values, topk.indices
+                values = []
+                indices = []
+                for i in range(0, logits.shape[0], 4096):
+                    probs = torch.nn.functional.softmax(logits[i:i+4096], dim=-1, dtype=torch.float32)
+                    topk = torch.topk(probs, k=return_topk, dim=-1)
+                    values.append(topk.values)
+                    indices.append(topk.indices)
+                    
+                return torch.cat(values, dim=0), torch.cat(indices, dim=0)
 
             return logits
 

@@ -280,12 +280,12 @@ def main():
                             mpu.get_data_parallel_rank()
                     
                     payload = {
-                        "input_ids": tokens.to("cpu", non_blocking=True),
-                        "labels": labels.to("cpu", non_blocking=True),
-                        "exp_logits": teacher_probs.to("cpu", non_blocking=True),
-                        "index": teacher_positions.to("cpu", non_blocking=True),
-                        "loss_mask": loss_mask.to("cpu", non_blocking=True), 
-                        "cu_seqlens": packed_seq_params.cu_seqlens_q.to("cpu", non_blocking=True),
+                        "input_ids": tokens.to("cpu", non_blocking=False),
+                        "labels": labels.to("cpu", non_blocking=False),
+                        "exp_logits": teacher_probs.to("cpu", non_blocking=False),
+                        "index": teacher_positions.to("cpu", non_blocking=False),
+                        "loss_mask": loss_mask.to("cpu", non_blocking=False), 
+                        "cu_seqlens": packed_seq_params.cu_seqlens_q.to("cpu", non_blocking=False),
                     }
                     
                     # We pass 'current_run_step' to tracker, but 'chunk_id' to saver
