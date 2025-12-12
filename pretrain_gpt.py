@@ -291,9 +291,9 @@ def forward_step(data_iterator, model: GPTModel):
 
     with stimer:
         distill_loss, lm_loss = model(
-            batch['input_ids'],
-            batch['position_ids'],
-            batch['attention_mask'],
+            input_ids=batch['input_ids'],
+            position_ids=batch['position_ids'],
+            attention_mask=batch['attention_mask'],
             labels=batch['labels'],
             teacher_probs=batch['exp_logits'],
             prob_positions=batch['index'],

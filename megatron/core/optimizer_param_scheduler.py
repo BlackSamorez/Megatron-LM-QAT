@@ -132,7 +132,6 @@ class OptimizerParamScheduler:
         min_lr = param_group.get('min_lr', self.min_lr)
         
         num_delayed_steps = self.num_steps - self.lr_delay_steps
-        log_single_rank(logger, logging.INFO, f"> num_delayed_steps: {num_delayed_steps}")
 
         # Use linear warmup for the initial part.
         if self.lr_warmup_steps > 0 and num_delayed_steps <= self.lr_warmup_steps:
