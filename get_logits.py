@@ -44,35 +44,7 @@ class ProgressTracker:
 
 # ---- 2. Safe IO Worker (Now with fsync/Atomic Rename) ----
 SAVER_WORKERS = 16
-
-def _save_file_safe(chunk_id: int, payload: dict, dst_path: str):
-    """
-    Saves file with hard durability guarantees:
-    1. Write to temp file
-    2. Flush buffers
-    3. fsync to disk
-    4. Atomic rename to final destination
-    """
-    filename = os.path.join(dst_path, f"{chunk_id:010d}.pt")
-    dirname = os.path.dirname(filename)
     
-    # Create temp file in same directory to ensure atomic move works
-    fd, tmp_path = tempfile.mkstemp(dir=dirname, prefix=f"tmp_{chunk_id}_")
-    
-    try:
-        with os.fdopen(fd, 'wb') as f:
-            torch.save(payload, f)
-            f.flush()           # Flush Python buffers
-            os.fsync(f.fileno()) # Force OS to write to physical disk
-            
-        # Atomic switch: The file instantly appears as valid data
-        os.rename(tmp_path, filename)
-        
-    except Exception as e:
-        # Cleanup garbage if we failed
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise e
 
 def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str):
     from concurrent.futures import ThreadPoolExecutor
@@ -83,7 +55,7 @@ def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str)
         # msg: (relative_step_idx, absolute_chunk_id, payload)
         rel_step, chunk_id, payload = msg
         try:
-            _save_file_safe(chunk_id, payload, dst_path)
+            torch.save(payload, os.path.join(dst_path, f"{chunk_id:010d}.pt"))
             status_q.put((rel_step, None))
         except Exception as e:
             status_q.put((rel_step, e))

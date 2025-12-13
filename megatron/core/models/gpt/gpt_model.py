@@ -312,7 +312,7 @@ class GPTModel(LanguageModule):
                     probs = torch.nn.functional.softmax(logits[i:i+4096], dim=-1, dtype=torch.float32)
                     topk = torch.topk(probs, k=return_topk, dim=-1)
                     values.append(topk.values)
-                    indices.append(topk.indices)
+                    indices.append(topk.indices.to(torch.int32))
                     
                 return torch.cat(values, dim=0), torch.cat(indices, dim=0)
 
