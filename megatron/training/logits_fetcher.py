@@ -12,6 +12,7 @@
 
 import os
 import json
+import gzip
 import multiprocessing as mp
 from typing import Dict, Tuple, Any, Optional, Set
 
@@ -22,7 +23,7 @@ logger = getLogger(__name__)
 
 
 # ---------------------- USER-DEFINED CONSTANTS ----------------------
-TENSORS_DIR = "/capstor/store/cscs/swissai/infra01/distillation/8B_TOP256_logits"
+TENSORS_DIR = "/iopsstor/scratch/cscs/blacksamorez/logits/8B_TOP256_logits_gzip"
 TOPK = 256
 SEQS_PER_FILE = 32          # 32 sequences per dp file
 FILES_PER_ITER = 128        # 128 dp files per iteration
@@ -33,13 +34,14 @@ SEQS_PER_ITER = SEQS_PER_FILE * FILES_PER_ITER  # 4096 sequences per iteration
 
 # ---------------------- Helpers (importable at module top) ----------------------
 def _filepath_for_seq(seq: int) -> str:
-    return os.path.join(TENSORS_DIR, f"{seq // 32:010d}.pt")
+    return os.path.join(TENSORS_DIR, f"{seq // 32:010d}.pt.gz")
 
 
 def _load_one_file(seq: int) -> Dict[str, torch.Tensor]:
     """Load a single DP file from disk (CPU tensors) and return the three buffers."""
     file_path = _filepath_for_seq(seq)
-    return torch.load(file_path, weights_only=False)
+    with gzip.open(file_path, 'rb') as f:
+        return torch.load(f, map_location='cpu', weights_only=False)
 
 
 def _prefetch_worker(task_q: mp.Queue, result_q: mp.Queue, *, n_threads: int = 8):
