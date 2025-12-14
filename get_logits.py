@@ -47,6 +47,7 @@ SAVER_WORKERS = 16
     
 
 def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str):
+    import gzip
     from concurrent.futures import ThreadPoolExecutor
     
     sem = threading.BoundedSemaphore(value=SAVER_WORKERS)
@@ -55,7 +56,8 @@ def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str)
         # msg: (relative_step_idx, absolute_chunk_id, payload)
         rel_step, chunk_id, payload = msg
         try:
-            torch.save(payload, os.path.join(dst_path, f"{chunk_id:010d}.pt"))
+            with gzip.open(os.path.join(dst_path, f"{chunk_id:010d}.pt.gz"), 'wb' ,compresslevel=1) as f:
+                torch.save(payload, f)
             status_q.put((rel_step, None))
         except Exception as e:
             status_q.put((rel_step, e))
