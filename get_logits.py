@@ -221,98 +221,99 @@ def main():
     print_rank_0(f"Starting run. Topology: {mpu.get_data_parallel_world_size()} DP workers.")
     global_progress = accumulated_chunks
 
-    with torch.no_grad():        
-        while global_progress * args.logits_samples_per_chunk < args.logits_samples:
-            for _ in range(args.logits_sync_iters):
-                start = perf_counter()
-                timers('batch-generator', log_level=1).start()
-                # Loader automatically skips 'accumulated_chunks' + 'current_run_step * world_size'
-                tokens, labels, loss_mask, attention_mask, position_ids = get_batch(train_data_iterator)
-                orig_seq_len = position_ids.size(1)
-                position_ids = position_ids.view(1, -1)
-                tokens = tokens.view(1, -1)
-                labels = labels.view(1, -1)
-                loss_mask = loss_mask.view(1, -1)
-                packed_seq_params = tokens_to_packed_seq_params(tokens, tokenizer.eod, orig_seq_len)
-                timers('batch-generator').stop()
-                
-                # Forward Pass
-                teacher_probs, teacher_positions = model(
-                    tokens, position_ids, attention_mask,
-                    packed_seq_params=packed_seq_params,
-                    runtime_gather_output=True,
-                    return_topk=args.logits_top_k,
-                )
+    try:
+        with torch.no_grad():        
+            while global_progress * args.logits_samples_per_chunk < args.logits_samples:
+                for _ in range(args.logits_sync_iters):
+                    start = perf_counter()
+                    timers('batch-generator', log_level=1).start()
+                    # Loader automatically skips 'accumulated_chunks' + 'current_run_step * world_size'
+                    tokens, labels, loss_mask, attention_mask, position_ids = get_batch(train_data_iterator)
+                    orig_seq_len = position_ids.size(1)
+                    position_ids = position_ids.view(1, -1)
+                    tokens = tokens.view(1, -1)
+                    labels = labels.view(1, -1)
+                    loss_mask = loss_mask.view(1, -1)
+                    packed_seq_params = tokens_to_packed_seq_params(tokens, tokenizer.eod, orig_seq_len)
+                    timers('batch-generator').stop()
+                    
+                    # Forward Pass
+                    teacher_probs, teacher_positions = model(
+                        tokens, position_ids, attention_mask,
+                        packed_seq_params=packed_seq_params,
+                        runtime_gather_output=True,
+                        return_topk=args.logits_top_k,
+                    )
 
-                # --- Dispatch Save (Elastic ID) ---
-                if mpu.get_tensor_model_parallel_rank() == 0:
-                    
-                    # ID CALCULATION: 
-                    # History + (Steps in this run * Current World Size) + My Rank
-                    chunk_id = accumulated_chunks + \
-                            (current_run_step * mpu.get_data_parallel_world_size()) + \
-                            mpu.get_data_parallel_rank()
-                    
-                    payload = {
-                        "input_ids": tokens.to("cpu", non_blocking=False),
-                        "labels": labels.to("cpu", non_blocking=False),
-                        "exp_logits": teacher_probs.to("cpu", non_blocking=False),
-                        "index": teacher_positions.to("cpu", non_blocking=False),
-                        "loss_mask": loss_mask.to("cpu", non_blocking=False), 
-                        "cu_seqlens": packed_seq_params.cu_seqlens_q.to("cpu", non_blocking=False),
-                    }
-                    
-                    # We pass 'current_run_step' to tracker, but 'chunk_id' to saver
-                    saver_payload_q.put((current_run_step, chunk_id, payload))
-                    drain_status_queue(saver_status_q, tracker)
-
-                # --- Periodic Sync ---
-                if current_run_step % SAVER_WORKERS == 0:
+                    # --- Dispatch Save (Elastic ID) ---
                     if mpu.get_tensor_model_parallel_rank() == 0:
+                        
+                        # ID CALCULATION: 
+                        # History + (Steps in this run * Current World Size) + My Rank
+                        chunk_id = accumulated_chunks + \
+                                (current_run_step * mpu.get_data_parallel_world_size()) + \
+                                mpu.get_data_parallel_rank()
+                        
+                        payload = {
+                            "input_ids": tokens.to("cpu", non_blocking=False),
+                            "labels": labels.to("cpu", non_blocking=False),
+                            "exp_logits": teacher_probs.to("cpu", non_blocking=False),
+                            "index": teacher_positions.to("cpu", non_blocking=False),
+                            "loss_mask": loss_mask.to("cpu", non_blocking=False), 
+                            "cu_seqlens": packed_seq_params.cu_seqlens_q.to("cpu", non_blocking=False),
+                        }
+                        
+                        # We pass 'current_run_step' to tracker, but 'chunk_id' to saver
+                        saver_payload_q.put((current_run_step, chunk_id, payload))
                         drain_status_queue(saver_status_q, tracker)
+
+                    # --- Periodic Sync ---
+                    if current_run_step % SAVER_WORKERS == 0:
+                        if mpu.get_tensor_model_parallel_rank() == 0:
+                            drain_status_queue(saver_status_q, tracker)
+                        
+                        # Syncs based on accumulated history + current safe progress
+                        global_progress = sync_and_save_elastic(tracker if tracker else None, accumulated_chunks, progress_file)
+
+                    current_run_step += 1
+                    end = perf_counter()
                     
-                    # Syncs based on accumulated history + current safe progress
-                    global_progress = sync_and_save_elastic(tracker if tracker else None, accumulated_chunks, progress_file)
-
-                current_run_step += 1
-                end = perf_counter()
+                    throughput = tokens.numel() / (end - start)
+                    if wandb_writer is not None:
+                        wandb_writer.log({
+                            'throughput': throughput,
+                            'chunk_id': chunk_id,
+                            'consumed_tokens': chunk_id * args.logits_samples_per_chunk * args.seq_length,
+                            'global_progress': global_progress,
+                        }, chunk_id)
+                    
+                    # bos_count = (tokens == 1).sum().cpu().item()
+                    # eos_count = (tokens == 2).sum().cpu().item()    
+                    # print_rank_0(f"{chunk_id}:\n\t{tokens[0, :10].cpu().tolist()=}\n\t{bos_count=}\n\t{eos_count=}\n\t{teacher_probs[:10, 0, 0].cpu().tolist()=}\n\t{teacher_probs[-10:, 0, 0].cpu().tolist()=}")
+                    print_rank_0(f"\ttok/s: {throughput:.0f}")
                 
-                throughput = tokens.numel() / (end - start)
-                if wandb_writer is not None:
-                    wandb_writer.log({
-                        'throughput': throughput,
-                        'chunk_id': chunk_id,
-                        'consumed_tokens': chunk_id * args.logits_samples_per_chunk * args.seq_length,
-                        'global_progress': global_progress,
-                    }, chunk_id)
+                # --- BLOCKING FLUSH (End of Inner Loop) ---
+                print_rank_0(f"Syncing at step {current_run_step}...")
                 
-                # bos_count = (tokens == 1).sum().cpu().item()
-                # eos_count = (tokens == 2).sum().cpu().item()    
-                # print_rank_0(f"{chunk_id}:\n\t{tokens[0, :10].cpu().tolist()=}\n\t{bos_count=}\n\t{eos_count=}\n\t{teacher_probs[:10, 0, 0].cpu().tolist()=}\n\t{teacher_probs[-10:, 0, 0].cpu().tolist()=}")
-                print_rank_0(f"\ttok/s: {throughput:.0f}")
-            
-            # --- BLOCKING FLUSH (End of Inner Loop) ---
-            print_rank_0(f"Syncing at step {current_run_step}...")
-            
-            # 1. Wait for local saver to finish EVERYTHING sent so far
-            if mpu.get_tensor_model_parallel_rank() == 0:
-                # We want tracker to catch up to the last step we submitted (current_run_step - 1)
-                last_submitted_step = current_run_step - 1
-                while tracker.highest_contiguous_step < last_submitted_step:
-                    drain_status_queue(saver_status_q, tracker)
-                    time.sleep(0.01) # Don't busy-loop the CPU
+                # 1. Wait for local saver to finish EVERYTHING sent so far
+                if mpu.get_tensor_model_parallel_rank() == 0:
+                    # We want tracker to catch up to the last step we submitted (current_run_step - 1)
+                    last_submitted_step = current_run_step - 1
+                    while tracker.highest_contiguous_step < last_submitted_step:
+                        drain_status_queue(saver_status_q, tracker)
+                        time.sleep(0.01) # Don't busy-loop the CPU
 
-            # 2. Synchronize all ranks (everyone is now physically done)
-            dist.barrier()
+                # 2. Synchronize all ranks (everyone is now physically done)
+                dist.barrier()
 
-            # 3. Update Global Progress File
-            global_progress = sync_and_save_elastic(tracker if tracker else None, accumulated_chunks, progress_file)
-            print_rank_0(f"Block Done. Global Progress: {global_progress}")
-            
-    if mpu.get_tensor_model_parallel_rank() == 0:
-        saver_payload_q.put(None)
-        save_worker.join()
-        drain_status_queue(saver_status_q, tracker)
+                # 3. Update Global Progress File
+                global_progress = sync_and_save_elastic(tracker if tracker else None, accumulated_chunks, progress_file)
+                print_rank_0(f"Block Done. Global Progress: {global_progress}")
+    finally:
+        if mpu.get_tensor_model_parallel_rank() == 0:
+            saver_payload_q.put(None)
+            save_worker.join()
+            drain_status_queue(saver_status_q, tracker)
     
 
     torch.distributed.destroy_process_group()
