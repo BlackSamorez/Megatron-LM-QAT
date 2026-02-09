@@ -325,6 +325,18 @@ def _load_checkpoint(queue, args):
                     message["mlp xielu alpha p"] = layer["mlp_xielu_alpha_p"].cpu()
                 if layer.get("mlp_xielu_alpha_n") is not None:
                     message["mlp xielu alpha n"] = layer["mlp_xielu_alpha_n"].cpu()
+                if layer.get("mlp_xielu_beta") is not None:
+                    beta_val = layer["mlp_xielu_beta"]
+                    if hasattr(beta_val, 'cpu'):
+                        message["mlp xielu beta"] = beta_val.cpu()
+                    else:
+                        message["mlp xielu beta"] = torch.tensor(beta_val)
+                if layer.get("mlp_xielu_eps") is not None:
+                    eps_val = layer["mlp_xielu_eps"]
+                    if hasattr(eps_val, 'cpu'):
+                        message["mlp xielu eps"] = eps_val.cpu()
+                    else:
+                        message["mlp xielu eps"] = torch.tensor(eps_val)
 
                 # Grab all parallel tensors for this layer
                 qkv_weight = []
