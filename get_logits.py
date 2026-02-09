@@ -55,9 +55,12 @@ def _save_worker(processed_q: queue.Queue, status_q: queue.Queue, dst_path: str)
     def _run_one(msg): 
         # msg: (relative_step_idx, absolute_chunk_id, payload)
         rel_step, chunk_id, payload = msg
+        final_path = os.path.join(dst_path, f"{chunk_id:010d}.pt.gz")
+        tmp_path = f"{final_path}.{threading.get_ident()}.tmp"
         try:
-            with gzip.open(os.path.join(dst_path, f"{chunk_id:010d}.pt.gz"), 'wb' ,compresslevel=1) as f:
+            with gzip.open(tmp_path, 'wb', compresslevel=1) as f:
                 torch.save(payload, f)
+            os.replace(tmp_path, final_path)
             status_q.put((rel_step, None))
         except Exception as e:
             status_q.put((rel_step, e))
