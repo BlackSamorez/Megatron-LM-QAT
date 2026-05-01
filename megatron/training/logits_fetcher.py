@@ -23,7 +23,7 @@ logger = getLogger(__name__)
 
 
 # ---------------------- USER-DEFINED CONSTANTS ----------------------
-TENSORS_DIR = "/capstor/store/cscs/swissai/infra01/distillation/8B_TOP256_logits_gzip"
+TENSORS_DIR = "/capstor/scratch/cscs/blacksamorez/logits/8B_TOP256_logits_gzip"
 TOPK = 256
 SEQS_PER_FILE = 32          # 32 sequences per dp file
 FILES_PER_ITER = 128        # 128 dp files per iteration

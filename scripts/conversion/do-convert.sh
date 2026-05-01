@@ -4,11 +4,12 @@
 #   - torch_dist           ---> torch ,  if CKPT_IS_TORCH_DIST=true.
 #   - core (torch backend) ---> HF    ,  always.
 
-pip install git+https://github.com/swiss-ai/transformers.git@model/swissai#egg=transformers
+# pip install git+https://github.com/swiss-ai/transformers.git@model/swissai#egg=transformers
+pip install transformers==4.57.6
 
 MEGATRON_LM_DIR=/capstor/store/cscs/swissai/a140/codebases/Megatron-LM-QAT
-CKPT_PATH=/capstor/store/cscs/swissai/infra01/distillation/checkpoints/distill/ap0.6b-from8b-TOP256/checkpoints
-# CKPT_PATH=/capstor/store/cscs/swissai/infra01/distillation/checkpoints/checkpoints-1B/ap1b-distill-16-nodes-TOP256/checkpoints
+CKPT_STEP=794000
+CKPT_PATH=/capstor/store/cscs/swissai/infra01/distillation/checkpoints/distill/ap0.6b-from8b-TOP256-foravg/checkpoints
 
 # [torch_dist -> torch] dependencies
 CKPT_IS_TORCH_DIST=true
@@ -16,7 +17,7 @@ TORCH_DIST_SCRIPT=$MEGATRON_LM_DIR/scripts/conversion/torchdist_2_torch.py
 TORCH_CKPT_SAVE_PATH=/iopsstor/scratch/cscs/$USER/checkpoints
 # [core (torch) --> HF] dependencies
 HF_SAVE_DIR=/capstor/store/cscs/swissai/a140/checkpoints/huggingface
-SAVE_DIR=$HF_SAVE_DIR/ap0.6b-from8b-TOP256-swissai-it360000
+SAVE_DIR=$HF_SAVE_DIR/ap0.6b-avg/ap0.6b-avg-it0$CKPT_STEP
 mkdir -p $HF_SAVE_DIR
 LOADER=core
 SAVER=swissai_hf
@@ -29,6 +30,7 @@ if [[ "$CKPT_IS_TORCH_DIST" == true ]]; then
     CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun $TORCH_DIST_SCRIPT \
     --bf16 \
     --load $CKPT_PATH \
+    --ckpt-step $CKPT_STEP \
     --ckpt-convert-save $TORCH_CKPT_SAVE_PATH
 else
     LOAD_DIR=$CKPT_PATH
